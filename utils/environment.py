@@ -1,112 +1,165 @@
-import random
-from .agent import agent1, agent2  # Import the two agents.
-from .board import *  # Import all board-related functions and utilities.
+import torch
+import numpy as np
+from settings import mapper  # Import the mapper dictionary to display board symbols (e.g., X, O).
+from typing import List
 
-
-def play_1game():
+def reset_board() -> np.ndarray:
     """
-    Simulates a single game between agent1 and agent2.
-
-    The function:
-    - Initializes an empty board.
-    - Randomly selects the starting player.
-    - Alternates turns between the two agents.
-    - Updates Q-values for the current player after each action.
-    - Ends when there is a winner or no possible moves (draw).
+    Reset the game board to an empty state.
 
     Returns:
-    - int: 0 if it's a draw, 1 if agent1 wins, -1 if agent2 wins.
+    - np.ndarray: A numpy array of zeros representing an empty board (1x9).
     """
-    # Take an empty board at the start of the game.
-    board = reset_board()
-
-    # Randomly choose the starting player (agent1 or agent2).
-    if random.uniform(0, 1) > 0.5:
-        player: Agent = agent1  # Start with agent1.
-    else:
-        player: Agent = agent2  # Start with agent2.
-
-    while True:
-        # Check if there are no possible moves left (resulting in a draw).
-        if not is_any_possible_move(board):
-            # Return 0 for a draw.
-            return 0
-
-        # If it's agent1's turn, let it choose an action.
-        if player is agent1:
-            action = agent1.choose_action(board)
-        else:
-            # If it's agent2's turn, let it choose an action.
-            action = agent2.choose_action(board)
-
-        # Update the board with the chosen action.
-        next_board = board.copy()  # Create a copy of the current board.
-        next_board[action] = player.player  # Mark the board with the player's move.
-
-        # Calculate the reward based on the board state and the action taken.
-        reward = player.get_reward(next_board, board, action)
-
-        # Update the player's Q-values using the Q-learning algorithm.
-        loss = player.network.update_q_values(board=board,
-                                              next_board=next_board,
-                                              action=action,
-                                              reward=reward)
-
-        # Check if the current move resulted in a winner.
-        winner = check_winner(next_board)
-        if winner:
-            # Return the winner (1 for agent1, -1 for agent2).
-            return winner
-
-        # Swap the player for the next turn (alternate between agent1 and agent2).
-        player = agent1 if player is agent2 else agent2
-
-        # Update the board state for the next turn.
-        board = next_board
+    return np.zeros(9)
 
 
-def train(epochs: int, load_pretrained: bool = False):
+def is_any_possible_move(board: torch.Tensor) -> bool:
     """
-    Trains agent1 and agent2 over a specified number of games (epochs).
+    Check if there are any available moves left on the board.
 
     Args:
-    - epochs (int): the number of training games to simulate.
-    - load_pretrained (bool): if True, load pretrained models for both agents.
-
-    This function:
-    - Plays multiple games (epochs) between the two agents.
-    - Tracks the number of wins for each agent and draws.
-    - Optionally loads pretrained models and saves the updated models after training.
+    - board (torch.Tensor): The current game board as a tensor.
 
     Returns:
-    - None: The function prints the win statistics and saves the agents' models.
+    - bool: True if there are empty spots (zeros) on the board, False otherwise.
     """
-    if load_pretrained:
-        # Load pretrained models for both agents if specified.
-        agent1.load_model(training_mode=True)
-        agent2.load_model(training_mode=True)
+    # Check if there are any zeros (empty spots) on the board.
+    return True if np.where(board.flatten() == 0)[0].shape[0] > 0 else False
 
-    # Initialize statistics for tracking wins and draws.
-    winners_stats = {
-        0: 0,  # Number of draws.
-        1: 0,  # Number of wins for agent1.
-        -1: 0  # Number of wins for agent2.
-    }
 
-    # Loop over the specified number of epochs (games).
-    for epoch in range(epochs):
-        print('--------')
-        print(f'Epoch: {epoch}')
+def check_winner(board: torch.Tensor) -> int:
+    """
+    Check if there is a winner on the current board.
 
-        # Play one game and get the result (winner or draw).
-        winner = play_1game()
+    Args:
+    - board (torch.Tensor): The current game board as a tensor.
 
-        # Update the statistics based on the winner.
-        winners_stats[winner] += 1
+    Returns:
+    - int: 1 if player 1 (represented by 1) wins,
+           -1 if player -1 wins,
+           0 if no winner is found (game is ongoing or a draw).
+    """
+    # Convert the board to a flattened list (1D).
+    board = board.flatten().tolist()
 
-    # Save the updated models for both agents after training.
-    agent1.save()
-    agent2.save()
+    # Define all possible winning configurations (rows, columns, diagonals).
+    winning_configs = ((0, 1, 2),  # Row 1
+                       (3, 4, 5),  # Row 2
+                       (6, 7, 8),  # Row 3
+                       (0, 3, 6),  # Column 1
+                       (1, 4, 7),  # Column 2
+                       (2, 5, 8),  # Column 3
+                       (0, 4, 8),  # Diagonal 1
+                       (2, 4, 6))  # Diagonal 2
 
-    # Print the final statistics after training.
-    print(winners_stats)
+    # Check if any of the winning configurations has been achieved.
+    for config in winning_configs:
+        if board[config[0]] == board[config[1]] == board[config[2]] != 0:
+            return board[config[0]]  # Return the player number (1 or -1).
+
+    # Return 0 if no winner is found.
+    return 0
+
+
+def if_player_lost_in_next_turn(board: torch.Tensor, player: int) -> bool:
+    """
+    Check if the given player will lose in the next turn.
+
+    Args:
+    - board (torch.Tensor): The current game board as a tensor.
+    - player (int): The current player's number (1 or -1).
+
+    Returns:
+    - bool: True if the player is at risk of losing in the next move, False otherwise.
+    """
+    # Change the player to the opponent (multiply by -1).
+    player *= -1
+
+    # Flatten the board for easier processing.
+    board = board.flatten().tolist()
+
+    # Define winning configurations (rows, columns, diagonals).
+    winning_configs = ((0, 1, 2),
+                       (3, 4, 5),
+                       (6, 7, 8),
+                       (0, 3, 6),
+                       (1, 4, 7),
+                       (2, 5, 8),
+                       (0, 4, 8),
+                       (2, 4, 6))
+
+    # Check if the opponent has two in a row with one empty spot in any configuration.
+    for config in winning_configs:
+        # Extract the board values for the current configuration.
+        choices = [i for idx, i in enumerate(board) if idx in config]
+
+        # If the opponent has two spots and one empty, the player might lose in the next turn.
+        if choices.count(player) == 2 and choices.count(0) == 1:
+            return True  # Player is in danger of losing.
+
+    return False  # No immediate threat of losing.
+
+
+def if_player_win_in_next_turn(board: torch.Tensor, player: int, amount_of_winnig_configs: int) -> bool:
+    """
+    Check if the player can win in the next move by completing a winning configuration.
+
+    Args:
+    - board (torch.Tensor): The current game board as a tensor.
+    - player (int): The current player's number (1 or -1).
+    - amount_of_winnig_configs (int): The number of configurations that would allow the player to win.
+
+    Returns:
+    - bool: True if the player can win in the next turn, False otherwise.
+    """
+    # Flatten the board for easier processing.
+    board = board.flatten().tolist()
+
+    # Define winning configurations (rows, columns, diagonals).
+    winning_configs = ((0, 1, 2),
+                       (3, 4, 5),
+                       (6, 7, 8),
+                       (0, 3, 6),
+                       (1, 4, 7),
+                       (2, 5, 8),
+                       (0, 4, 8),
+                       (2, 4, 6))
+
+    winning_config = 0  # Counter for the number of possible winning configurations.
+
+    # Check each configuration to see if the player is one move away from winning.
+    for config in winning_configs:
+        choices = [i for idx, i in enumerate(board) if idx in config]
+        if choices.count(player) == 2 and choices.count(0) == 1:
+            winning_config += 1  # Increment if player has two in a row with one empty spot.
+
+    # Return True if the number of potential winning configurations is greater than or equal to the target.
+    return winning_config >= amount_of_winnig_configs
+
+
+def display_board(board: torch.Tensor) -> np.ndarray:
+    """
+    Display the board with human-readable symbols.
+
+    Args:
+    - board (torch.Tensor): The current game board as a tensor (with 1, -1, 0 values).
+
+    Returns:
+    - np.ndarray: The board as a 3x3 numpy array with 'X' for player 1, 'O' for player -1, and '-' for empty spots.
+    """
+    # Flatten the board and map the integer values to symbols using the 'mapper' dictionary.
+    board = board.flatten().tolist()
+    board = [mapper.get(int(i)) for i in board]
+
+    # Reshape the board to a 3x3 numpy array for display purposes.
+    return np.array(board, dtype=str).reshape(3, 3)
+
+
+
+def get_available_action(board: np.ndarray) -> List[int]:
+
+    #Make sure board is flatten
+    board = board.flatten()
+
+    return np.where(board == 0)[0].tolist()
+
