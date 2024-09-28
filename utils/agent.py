@@ -1,6 +1,6 @@
 import torch
 
-from network import A3C_Network
+from network import A3C_Network, global_network
 from settings import *  # Import settings for neural network configuration.
 from environment import *  # Import necessary board functions.
 import numpy as np
@@ -16,7 +16,6 @@ class Agent(mp.Process):
     """
 
     def __init__(self,
-                 global_network: A3C_Network,
                  games_played: mp.Value,
                  games2play: int,
                  *args, **kwargs):
@@ -27,8 +26,6 @@ class Agent(mp.Process):
         - player (int): Player number, either 1 (for player 1) or -1 (for player 2).
         """
         super().__init__(*args, **kwargs)
-        self.global_network = global_network
-
         self.games2play = games2play
         self.games_played = games_played
 
@@ -105,8 +102,8 @@ class Agent(mp.Process):
         buffor = []
 
         #Initial local network as copy of global network
-        local_network = A3C_Network(**settings)
-        local_network.load_state_dict(state_dict=self.global_network.state_dict())
+        local_network = A3C_Network(**settings, name='local')
+        local_network.load_state_dict(state_dict=global_network.state_dict())
 
         # Take empty board
         board = reset_board()
@@ -114,8 +111,7 @@ class Agent(mp.Process):
         player = 1 #1 or -1
 
         # Check if more game is required
-        while any([not check_winner(board=board), is_any_possible_move(board=board)]):
-
+        while all([not check_winner(board=board), is_any_possible_move(board=board)]):
             #Get available actions
             available_action = get_available_action(board)
 
@@ -148,9 +144,8 @@ class Agent(mp.Process):
                                          action=action,
                                          player=player)
                 #Update buffor
-                buffor.append([board, action, reward, value])
+                buffor.append([tensor_board, action, reward, value])
 
-                print(buffor)
                 if len(buffor) == 5:
                     local_network.train(buffor)
                     #Clear buffor
@@ -170,26 +165,3 @@ class Agent(mp.Process):
             self.games_played.value += 1
 
 
-
-
-
-    # def save(self):
-    #     """
-    #     Save the agent's Q-network model to the specified file path.
-    #     """
-    #     torch.save(self.network.state_dict(), self.model_path)
-    #
-    # def load_model(self, training_mode: bool = False):
-    #     """
-    #     Load the agent's Q-network model from the specified file path.
-    #
-    #     Args:
-    #     - training_mode (bool): If True, the network is set to training mode; otherwise, it's set to evaluation mode.
-    #     """
-    #     # Reinitialize the network and load the saved model.
-    #     self.network = QNetwork(**settings[self.player])
-    #     self.network.load_state_dict(torch.load(self.model_path))
-    #
-    #     # Set the network to evaluation mode unless training mode is explicitly requested.
-    #     if not training_mode:
-    #         self.network.eval()
